@@ -1,79 +1,66 @@
-name: Continuous Integration
+on: [push, pull_request]
 
-on: push
+name: Code coverage with grcov
 
 jobs:
-  fmt:
-    name: Source formatting check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
+  grcov:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macOS-latest
+          - windows-latest
 
-      - name: Install Rust toolchain
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          profile: minimal
           toolchain: nightly
           override: true
-          components: rustfmt
-
-      - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: -- --check
-
-  check:
-    name: Compilation check
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      matrix:
-        rust:
-          - stable
-          - beta
-          - nightly
-          - 1.41.0
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
           profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
 
-      - name: Run cargo check
+      - name: Execute tests
         uses: actions-rs/cargo@v1
         with:
-          command: check
+          command: test
+          args: --all
+        env:
+          CARGO_INCREMENTAL: 0
+          RUSTFLAGS: "-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests"
 
-  clippy:
-    name: Lint check
+      # Note that `actions-rs/grcov` Action can install `grcov` too,
+      # but can't use faster installation methods yet.
+      # As a temporary experiment `actions-rs/install` Action plugged in here.
+      # Consider **NOT** to copy that into your workflow,
+      # but use `actions-rs/grcov` only
+      - name: Pre-installing grcov
+        uses: actions-rs/install@v0.1
+        with:
+          crate: grcov
+          use-tool-cache: true
+
+      - name: Gather coverage data
+        id: coverage
+        uses: actions-rs/grcov@v0.1
+        with:
+          coveralls-token: ${{ secrets.COVERALLS_TOKEN }}
+
+      - name: Coveralls upload
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel: true
+          path-to-lcov: ${{ steps.coverage.outputs.report }}
+
+  grcov_finalize:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      matrix:
-        rust:
-          - stable
-          - 1.41.0
+    needs: grcov
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Coveralls finalization
+        uses: coverallsapp/github-action@master
         with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
-          components: clippy
-
-      - name: Run lints
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          parallel-finished: true
